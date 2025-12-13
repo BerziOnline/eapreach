@@ -45,41 +45,12 @@ AUTHENTICATOR (AP/Switch) ← Backend RADIUS (not visible to eapreach)
 
 ---
 
-## Quick Start
-
-### Prerequisites
-
-```bash
-# Ubuntu/Debian
-sudo apt install wireshark-common tshark bash
-
-# RHEL/CentOS
-sudo yum install wireshark bash
-
-# Arch
-sudo pacman -S wireshark-cli bash
-```
-
-### LAN (Ethernet) - 802.1X Port
-Your client must be physically connected to a 802.1X-enabled switch port.
-
-### WLAN (Wi-Fi) - 802.1X
-Your client must be connected to (or attempting to connect to) the 802.1X-protected SSID.
-
-**Video:** Help output & interactive example
-![Help output](docs/help-output.webm)
-
-**Video:** Live Wi-Fi capture
-![Live capture WLAN](docs/live-capture-wlan.webm)
-
----
-
 ## Output Examples
 
 ### Help
 > [!TIP]
 > <details>
->    <summary>📹 <strong>watch here for help</strong></summary>
+>    <summary>Screenrecord - <strong>Help</strong> <em>(click for watching)</em></summary>
 >
 >![Help Output](records/help.gif)
 >
@@ -247,11 +218,51 @@ PEAP is also working. You can see the same issues as in the EAP-TTLS tunneling h
 >```
 >
 ></details>
+
 ---
 
 ## Usage
 
-### Live Mode (Real-Time Capture)
+### Installation
+
+#### System Requirements
+
+- **Linux-System**
+- **Bash 4.0+**
+- **tshark** (from wireshark-common or wireshark-cli)
+- **Standard Unix tools:** grep, sed, head, ip
+- **sudo** (for live packet capture)
+
+#### Prerequisites
+
+```bash
+# Ubuntu/Debian
+sudo apt install wireshark-common tshark bash
+
+# RHEL/CentOS
+sudo yum install wireshark bash
+
+# Arch
+sudo pacman -S wireshark-cli bash
+```
+
+#### No Installation Required
+
+`eapreach` is a single-file Bash script. Just run it directly:
+
+
+### Connection Type
+
+#### LAN (Ethernet) - 802.1X Port
+Your client must be physically connected to a 802.1X-enabled switch port.
+
+#### WLAN (Wi-Fi) - 802.1X
+Your client must be connected to (or attempting to connect to) the 802.1X-protected SSID.
+
+
+### Starting the Analysis
+
+#### Live Mode (Real-Time Capture)
 
 Monitor authentication as it happens:
 
@@ -265,7 +276,7 @@ sudo ./eapreach.sh -i wlan0
 
 Press `Ctrl+C` to stop. You'll be prompted to save the capture file.
 
-### File Mode (Offline Analysis)
+#### File Mode (Offline Analysis)
 
 Analyze a previously captured PCAP file:
 
@@ -274,7 +285,7 @@ Analyze a previously captured PCAP file:
 ./eapreach.sh /path/to/eap_auth.pcapng
 ```
 
-### Help
+#### Help
 
 ```bash
 ./eapreach.sh -h
@@ -284,37 +295,27 @@ Shows complete usage, examples, and detailed security explanations.
 
 ---
 
-## EAP Methods Supported
+## Understanding the Output Format
 
-| Method | Tunnel | Status |
-|--------|--------|--------|
-| EAP-Identity | No | ✅ Supported |
-| MD5-Challenge | No | ✅ Supported |
-| EAP-TLS | No | ❔ Should work |
-| EAP-TTLS | Yes | ✅ Supported |
-| PEAP | Yes | ✅ Supported |
-| EAP-FAST | Yes | ❔ Should work |
-| EAP-TEAP | Yes | ❔ Should work |
+```
+Frame | EAPOL Type          | EAP Type             | EAP Code             | Details
+────────────────────────────────────────────────────────────────────────────────────
+123   | Start               |                      |                      | 
+124   | EAP Packet          | Identity             | Request              | 
+125   | EAP Packet          | Identity             | Response             | Identity: user@example.com
+126   | EAP Packet          | EAP-TLS              | Request              | TLS: Client Hello(1)
+```
 
----
-
-## Installation
-
-### System Requirements
-
-- **Linux** (Ubuntu, Debian, RHEL, Arch, etc.)
-- **Bash 4.0+**
-- **tshark** (from wireshark-common or wireshark-cli)
-- **Standard Unix tools:** grep, sed, head, ip
-- **sudo** (for live packet capture)
-
-### No Installation Required
-
-`eapreach` is a single-file Bash script. Just run it directly:
+**Columns:**
+- **Frame:** Packet number in capture
+- **EAPOL Type:** Start, EAP Packet, Success, Failure, Logoff
+- **EAP Type:** Identity, MD5-Challenge, EAP-TLS, EAP-TTLS, PEAP, etc.
+- **EAP Code:** Request, Response, Success, Failure
+- **Details:** TLS handshake, certificates, warnings, username, etc.
 
 ---
 
-## Examples
+## More Examples
 
 ### Audit Network Security
 
@@ -408,35 +409,17 @@ sudo pacman -S wireshark-cli
 
 ---
 
-## Output Format
+## EAP Methods Supported
 
-```
-Frame | EAPOL Type          | EAP Type             | EAP Code             | Details
-────────────────────────────────────────────────────────────────────────────────────
-123   | Start               |                      |                      | 
-124   | EAP Packet          | Identity             | Request              | 
-125   | EAP Packet          | Identity             | Response             | Identity: user@example.com
-126   | EAP Packet          | EAP-TLS              | Request              | TLS: Client Hello(1)
-```
-
-**Columns:**
-- **Frame:** Packet number in capture
-- **EAPOL Type:** Start, EAP Packet, Success, Failure, Logoff
-- **EAP Type:** Identity, MD5-Challenge, EAP-TLS, EAP-TTLS, PEAP, etc.
-- **EAP Code:** Request, Response, Success, Failure
-- **Details:** TLS handshake, certificates, warnings, username, etc.
-
----
-
-## Performance & Limitations
-
-| Aspect | Details |
-|--------|---------|
-| **Processing** | Real-time for live captures; instant for file analysis |
-| **Certificate parsing** | Extracts CN, Issuer, validity dates; decodes X.509 v3 |
-| **TLS Analysis** | Shows handshake messages; does NOT decrypt encrypted content |
-| **RADIUS** | Shows CLIENT-side EAP; does NOT capture backend RADIUS traffic |
-| **File size** | Can handle captures up to several GB |
+| Method | Tunnel | Status |
+|--------|--------|--------|
+| EAP-Identity | No | ✅ Supported |
+| MD5-Challenge | No | ✅ Supported |
+| EAP-TLS | No | ❔ Should work |
+| EAP-TTLS | Yes | ✅ Supported |
+| PEAP | Yes | ✅ Supported |
+| EAP-FAST | Yes | ❔ Should work |
+| EAP-TEAP | Yes | ❔ Should work |
 
 ---
 
