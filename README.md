@@ -43,6 +43,7 @@ eapreach shows what the **client** or **attacker** sees, not backend RADIUS comm
 ## Output Examples
 
 ### Help
+- This is what the help looks like. Security warnings are explained there.
 > [!TIP]
 > <details>
 >    <summary>Screenrecord - <strong>Help</strong> <em>(click for watching)</em></summary>
@@ -51,9 +52,11 @@ eapreach shows what the **client** or **attacker** sees, not backend RADIUS comm
 >
 ></details>
 
-This is what the help looks like. Security warnings are explained there.
-
 ### Live Capture
+- Sadly there was no live-data while recording for documentation :'-(
+- You can see each new EAP packet incoming, marked by relevant and interesting information.
+- Stopping the capture asks you to keep the captured traffic as full pcap-file (not just EAP traffic!) or not.
+- This could be helpful for troubleshooting issues not just related to EAP, perform offline analysis later on or extract whole certificates out of the bytestream.
 > [!TIP]
 > <details>
 >    <summary>Screenrecord - <strong>Live Capture</strong> <em>(click for watching)</em></summary>
@@ -62,10 +65,10 @@ This is what the help looks like. Security warnings are explained there.
 >
 ></details>
 
-Sadly there was no live-data while recording :'-( <br>
-You would see each new EAP packet incoming, marked by relevant and interesting information.
-
 ### Successful MD5 Authentication
+- You can see the sniffed identity of "bob" (what is not an issue).
+- There is a sniffed deprecated MD5-Hash (what is an issue).
+- MD5 is cryptographically broken. This network is vulnerable.
 > [!TIP]
 > <details>
 >    <summary>Screenrecord - <strong>MD5 Authentication</strong> <em>(click for watching)</em></summary>
@@ -74,11 +77,10 @@ You would see each new EAP packet incoming, marked by relevant and interesting i
 >
 ></details>
 
-You can see the sniffed identity of "bob" (what is not an issue).<br>
-There is a sniffed deprecated MD5-Hash (what is an issue).<br>
-MD5 is cryptographically broken. This network is vulnerable.
-
 ### Failed EAP-TTLS Authentication
+- There are several issues.
+- You can see that there is a downgrade message, MD5 hashes in use and also a self signed certificate for the TLS tunnel.
+- The more certificate information is displayed human readable.
 > [!TIP]
 > <details>
 >    <summary>Screenrecord - <strong>EAP-TTLS Authentication</strong> <em>(click for watching)</em></summary>
@@ -87,13 +89,8 @@ MD5 is cryptographically broken. This network is vulnerable.
 >
 ></details>
 
-There are several issues.<br>
-You can see that there is a downgrade message, MD5 hashes in use and also a self signed certificate for the TLS tunnel.<br>
-The more certificate information is displayed human readable.
-
-
-
 ### Multiple EAP-TTLS Authentications
+- This shows that you can analyze as much as authentications you want to in a row.
 > [!TIP]
 > <details>
 >    <summary>Screenrecord - <strong>Multiple Authentications</strong> <em>(click for watching)</em></summary>
@@ -102,12 +99,8 @@ The more certificate information is displayed human readable.
 >
 ></details>
 
-This shows that you can analyze as much as authentications you want to in a row.
-
-
-
-
 ### Failed PEAP Authentication
+- PEAP is also working. You can see the same issues as in the EAP-TTLS tunneling here.
 > [!TIP]
 > <details>
 >    <summary>Screenrecord - <strong>PEAP Authentication</strong> <em>(click for watching)</em></summary>
@@ -115,9 +108,6 @@ This shows that you can analyze as much as authentications you want to in a row.
 >![Help Output](records/PEAP_1xFail.gif)
 >
 ></details>
-
-PEAP is also working. You can see the same issues as in the EAP-TTLS tunneling here.
-
 
 ---
 
@@ -222,24 +212,10 @@ PEAP is also working. You can see the same issues as in the EAP-TTLS tunneling h
 
 #### System Requirements
 
-- **Linux-System**
-- **Bash 4.0+**
+- **Linux-System with Bash**
+- **Default Unix tools:** grep, sed, head, ip
 - **tshark** (from wireshark-common or wireshark-cli)
-- **Standard Unix tools:** grep, sed, head, ip
 - **sudo** (for live packet capture)
-
-#### Prerequisites
-
-```bash
-# Ubuntu/Debian
-sudo apt install wireshark-common tshark bash
-
-# RHEL/CentOS
-sudo yum install wireshark bash
-
-# Arch
-sudo pacman -S wireshark-cli bash
-```
 
 #### No Installation Required
 
