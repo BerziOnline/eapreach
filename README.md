@@ -76,6 +76,10 @@ Your client must be connected to (or attempting to connect to) the 802.1X-protec
 
 ## Output Examples
 
+![Help Output](records/help.gif)
+
+
+
 ### Successful EAP-TTLS Authentication
 
 **Video:** EAP-TTLS (3x Success, 1x Fail)
