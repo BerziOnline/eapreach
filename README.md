@@ -76,109 +76,177 @@ Your client must be connected to (or attempting to connect to) the 802.1X-protec
 
 ## Output Examples
 
-![Help Output](records/help.gif)
+### Help
+> [!TIP]
+> <details>
+>    <summary>📹 <strong>watch here for help</strong></summary>
+>
+>![Help Output](records/help.gif)
+>
+></details>
+
+This is what the help looks like. Security warnings are explained there.
+
+### Live Capture
+> [!TIP]
+> <details>
+>    <summary>Screenrecord - <strong>Live Capture</strong> <em>(click for watching)</em></summary>
+>
+>![Help Output](records/live_capture%20%28sadly%20no%20live-data%20available%29.gif)
+>
+></details>
+
+Sadly there was no live-data while recording :'-( <br>
+You would see each new EAP packet incoming, marked by relevant and interesting information.
+
+### Successful MD5 Authentication
+> [!TIP]
+> <details>
+>    <summary>Screenrecord - <strong>MD5 Authentication</strong> <em>(click for watching)</em></summary>
+>
+>![Help Output](records/MD5_1xSuccess.gif)
+>
+></details>
+
+You can see the sniffed identity of "bob" (what is not an issue).<br>
+There is a sniffed deprecated MD5-Hash (what is an issue).<br>
+MD5 is cryptographically broken. This network is vulnerable.
+
+### Failed EAP-TTLS Authentication
+> [!TIP]
+> <details>
+>    <summary>Screenrecord - <strong>EAP-TTLS Authentication</strong> <em>(click for watching)</em></summary>
+>
+>![Help Output](records/EAP-TTLS_1xFail.gif)
+>
+></details>
+
+There are several issues.<br>
+You can see that there is a downgrade message, MD5 hashes in use and also a self signed certificate for the TLS tunnel.<br>
+The more certificate information is displayed human readable.
 
 
 
-### Successful EAP-TTLS Authentication
+### Multiple EAP-TTLS Authentications
+> [!TIP]
+> <details>
+>    <summary>Screenrecord - <strong>Multiple Authentications</strong> <em>(click for watching)</em></summary>
+>
+>![Help Output](records/EAP-TTLS_3xSuccess_1xFail.gif)
+>
+></details>
 
-**Video:** EAP-TTLS (3x Success, 1x Fail)
-![EAP-TTLS analysis](docs/eap-ttls-demo.webm)
+This shows that you can analyze as much as authentications you want to in a row.
+
+
+
 
 ### Failed PEAP Authentication
+> [!TIP]
+> <details>
+>    <summary>Screenrecord - <strong>PEAP Authentication</strong> <em>(click for watching)</em></summary>
+>
+>![Help Output](records/PEAP_1xFail.gif)
+>
+></details>
 
-**Video:** PEAP with self-signed certificate (authentication fails)
-![PEAP failure](docs/peap-fail-demo.webm)
+PEAP is also working. You can see the same issues as in the EAP-TTLS tunneling here.
 
-### Insecure MD5-Challenge
-
-**Video:**
-
-**Analysis:** MD5 is cryptographically broken. This network is vulnerable.
 
 ---
 
 ## Security Warnings Explained
 
-### ⚠️ [DEPRECATED] - MD5-Challenge
-
-**Why dangerous:**
-- MD5 hash function is cryptographically broken (RFC 6151)
-- Collision attacks make cracking feasible (~hours with modern GPUs)
-- Attackers can craft fake MD5 responses
-- No mutual authentication—server can't verify client legitimacy
-
-**How to exploit:**
-```
-1. Capture MD5 challenge from network (visible in eapreach output)
-2. Perform offline dictionary/rainbow table attack
-3. Forge MD5 response to impersonate user
-4. No detection possible—valid hash = valid credential
-```
-
-**Remediation:**
-```
-→ Disable MD5-Challenge on all RADIUS/NAS servers immediately
-→ Configure only: EAP-TLS, EAP-TTLS, PEAP, EAP-FAST, EAP-TEAP
-→ Force minimum TLS 1.2 for tunnel-based methods
-→ Audit all devices—replace hardware that can't do EAP-TLS
-```
-
----
-
-### ⚠️ [DOWNGRADE] - Legacy NAK Fallback Attack
-
-**Why dangerous:**
-- Legacy NAK forces server to negotiate weaker EAP methods
-- RFC 3748 Section 4.3 explicitly lists this as an attack vector
-- Can be injected by attacker during authentication
-- Enables attacks on deprecated methods (e.g., MD5-Challenge)
-
-**How to exploit:**
-```
-1. Attacker intercepts EAP-Request (e.g., for EAP-TTLS)
-2. Injects Legacy NAK: "Client can't do this method"
-3. Server falls back to MD5-Challenge (much weaker)
-4. Attacker cracks MD5 instead of TLS (drastically easier)
-```
-
-**Remediation:**
-```
-→ REJECT Legacy NAK responses on all NAS/RADIUS servers
-→ Enable only strong EAP types (whitelist model)
-→ Monitor logs for Legacy NAK → indicates old/non-compliant hardware
-→ Identify and replace devices that don't support modern EAP
-→ Consider EAP-TLS enforcement only (zero downgrade risk)
-```
+> [!WARNING]
+> <details>
+>    <summary><strong>[DEPRECATED] - MD5-Challenge</strong> <em>(click for details)</em></summary>
+>
+>**Why dangerous:**
+>- MD5 hash function is cryptographically broken (RFC 6151)
+>- Collision attacks make cracking feasible (~hours with modern GPUs)
+>- Attackers can craft fake MD5 responses
+>- No mutual authentication—server can't verify client legitimacy
+>
+>**How to exploit:**
+>```
+>1. Capture MD5 challenge from network (visible in eapreach output)
+>2. Perform offline dictionary/rainbow table attack
+>3. Forge MD5 response to impersonate user
+>4. No detection possible—valid hash = valid credential
+>```
+>
+>**Remediation:**
+>```
+>→ Disable MD5-Challenge on all RADIUS/NAS servers immediately
+>→ Configure only: EAP-TLS, EAP-TTLS, PEAP, EAP-FAST, EAP-TEAP
+>→ Force minimum TLS 1.2 for tunnel-based methods
+>→ Audit all devices—replace hardware that can't do EAP-TLS
+>```
+>
+></details>
 
 ---
 
-### ⚠️ [SELF-SIGNED] - Self-Signed Certificate
+> [!WARNING]
+> <details>
+>    <summary><strong>[DOWNGRADE] - Legacy NAK Fallback Attack</strong> <em>(click for details)</em></summary>
+>
+>**Why dangerous:**
+>- Legacy NAK forces server to negotiate weaker EAP methods
+>- RFC 3748 Section 4.3 explicitly lists this as an attack vector
+>- Can be injected by attacker during authentication
+>- Enables attacks on deprecated methods (e.g., MD5-Challenge)
+>
+>**How to exploit:**
+>```
+>1. Attacker intercepts EAP-Request (e.g., for EAP-TTLS)
+>2. Injects Legacy NAK: "Client can't do this method"
+>3. Server falls back to MD5-Challenge (much weaker)
+>4. Attacker cracks MD5 instead of TLS (drastically easier)
+>```
+>
+>**Remediation:**
+>```
+>→ REJECT Legacy NAK responses on all NAS/RADIUS servers
+>→ Enable only strong EAP types (whitelist model)
+>→ Monitor logs for Legacy NAK → indicates old/non-compliant hardware
+>→ Identify and replace devices that don't support modern EAP
+>→ Consider EAP-TLS enforcement only (zero downgrade risk)
+>```
+>
+></details>
 
-**Why dangerous:**
-- No Certificate Authority validation (Subject == Issuer)
-- Client has no way to verify server identity authentically
-- Perfect setup for Man-in-the-Middle (MITM) attacks
-- Attacker can present any self-signed cert—client will "accept" it
+---
 
-**How to exploit:**
-```
-1. Attacker sets up rogue AP on same network
-2. Client connects, server (attacker) presents self-signed cert
-3. Client has NO way to verify legitimacy (no CA chain to check)
-4. Attacker acts as transparent proxy: Client ↔ Attacker ↔ Real Server
-5. Attacker decrypts/modifies/captures all EAP traffic
-```
-
-**Remediation:**
-```
-→ Use ONLY certificates from trusted CAs (DigiCert, Let's Encrypt, etc.)
-→ Import CA root cert on all clients (certificate pinning)
-→ Verify cert chain on client side (WPA2-Enterprise policy)
-→ Monitor logs for self-signed certificates
-→ Educate users: REJECT unknown certificate warnings
-```
-
+> [!WARNING]
+> <details>
+>    <summary><strong>[SELF-SIGNED] - Self-Signed Certificate</strong> <em>(click for details)</em></summary>
+>
+>**Why dangerous:**
+>- No Certificate Authority validation (Subject == Issuer)
+>- Client has no way to verify server identity authentically
+>- Perfect setup for Man-in-the-Middle (MITM) attacks
+>- Attacker can present any self-signed cert—client will "accept" it
+>
+>**How to exploit:**
+>```
+>1. Attacker sets up rogue AP on same network
+>2. Client connects, server (attacker) presents self-signed cert
+>3. Client has NO way to verify legitimacy (no CA chain to check)
+>4. Attacker acts as transparent proxy: Client ↔ Attacker ↔ Real Server
+>5. Attacker decrypts/modifies/captures all EAP traffic
+>```
+>
+>**Remediation:**
+>```
+>→ Use ONLY certificates from trusted CAs (DigiCert, Let's Encrypt, etc.)
+>→ Import CA root cert on all clients (certificate pinning)
+>→ Verify cert chain on client side (WPA2-Enterprise policy)
+>→ Monitor logs for self-signed certificates
+>→ Educate users: REJECT unknown certificate warnings
+>```
+>
+></details>
 ---
 
 ## Usage
