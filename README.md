@@ -300,6 +300,18 @@ Compare outputs to understand which methods work and their security posture.
 
 ## Troubleshooting
 
+### "Permission denied" error
+
+Live packet capture requires root:
+
+```bash
+# Use sudo
+sudo ./eapreach.sh -i wlan0
+
+# Or analyze a previously saved file (no sudo needed)
+./eapreach.sh capture.pcapng
+```
+
 ### "tshark not found"
 
 ```bash
@@ -321,18 +333,6 @@ sudo pacman -S wireshark-cli
 - Authentication already completed (start capture *before* connecting)
 - Wrong interface name (use `ip link show` to list)
 - Port on switch not configured for 802.1X
-
-### "Permission denied" error
-
-Live packet capture requires root:
-
-```bash
-# Use sudo
-sudo ./eapreach.sh -i wlan0
-
-# Or analyze a previously saved file (no sudo needed)
-./eapreach.sh capture.pcapng
-```
 
 ---
 
@@ -387,14 +387,6 @@ Frame | EAPOL Type          | EAP Type             | EAP Code             | Deta
 - **RFC 5281:** Extensible Authentication Protocol Tunneled Transport Layer Security
 - **RFC 2104:** HMAC: Keyed-Hashing for Message Authentication
 - **RFC 6151:** Updated Security Considerations for MD5 and HMAC-MD5
-
----
-
-## Author
-
-Created by network engineers, for network engineers. Built to answer one question: **"What really happens during 802.1X authentication?"**
-
-Reach each packet. Understand the reality. Enforce compliance.
 
 ---
 
