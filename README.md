@@ -4,7 +4,7 @@
 
 **Reach each** EAP packet. Discover configuration reality. **Preach** configuration compliance.
 
-A powerful, client-side **802.1X/EAP packet analyzer** with integrated certificate validation. Understand what really happens during enterprise Ethernet and Wi-Fi authentication.
+A client-side **802.1X/EAP packet analyzer** with integrated certificate validation. Understand what really happens during enterprise Ethernet and Wi-Fi authentication.
 
 ---
 
