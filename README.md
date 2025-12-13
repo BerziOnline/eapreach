@@ -16,11 +16,10 @@ A powerful, client-side **802.1X/EAP packet analyzer** with integrated certifica
 
 | Scenario | eapreach helps by... |
 |----------|----------------------|
-| **Troubleshooting 802.1X failures** | Shows exactly where auth breaks (Identity? Certificate? TLS handshake?) |
-| **Testing different EAP methods** | Validate EAP-TLS, EAP-TTLS, PEAP, MD5-Challenge side-by-side |
+| **Troubleshooting 802.1X failures** | Shows where auth breaks (Identity? Certificate? TLS handshake?) |
+| **Testing different EAP methods** | Validate EAP-TLS, EAP-TTLS, PEAP, MD5-Challenges |
 | **Certificate validation** | Automatically detects self-signed certs, issuer chains, expiration dates |
 | **Security auditing** | Identifies deprecated methods (MD5), downgrade attacks (Legacy NAK), MITM risks |
-| **Network compliance** | Verify corporate security policies are actually enforced |
 | **Device testing** | Check if a specific device supports modern EAP methods |
 
 ---
