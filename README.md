@@ -24,6 +24,26 @@ A powerful, client-side **802.1X/EAP packet analyzer** with integrated certifica
 
 ---
 
+## Real-World Use Cases
+
+### 🎓 Network Administrators
+- **Deploy 802.1X:** Verify correct certificate, test all client types
+- **Troubleshoot:** Why is Device X failing to auth?
+- **Audit:** Ensure deprecated methods (MD5) are truly disabled
+
+### 🔒 Security Teams
+- **Penetration Testing:** Detect MITM vulnerabilities (self-signed certs, downgrade attacks)
+- **Incident Response:** Analyze captured authentications for anomalies
+- **Policy Validation:** Verify authentication handshakes, used certificates, TLS & cipher suites
+- **Compliance:** Prove that only strong EAP methods are in use
+
+### 👨‍💻 Developers
+- **Client Software:** Debug why your app fails 802.1X auth
+- **Device Firmware:** Verify EAP implementation correctness
+- **Testing:** Create repeatable test scenarios with recorded captures
+
+---
+
 ## How it works
 
 ```
@@ -269,7 +289,7 @@ Shows complete usage, examples, and detailed security explanations.
 ## Understanding the Output Format
 
 ```
-Frame | EAPOL Type          | EAP Type             | EAP Code             | Details
+Frame | EAPOL Type          | EAP Type             | EAP Code             | Interesting
 ────────────────────────────────────────────────────────────────────────────────────
 123   | Start               |                      |                      | 
 124   | EAP Packet          | Identity             | Request              | 
@@ -282,7 +302,7 @@ Frame | EAPOL Type          | EAP Type             | EAP Code             | Deta
 - **EAPOL Type:** Start, EAP Packet, Success, Failure, Logoff
 - **EAP Type:** Identity, MD5-Challenge, EAP-TLS, EAP-TTLS, PEAP, etc.
 - **EAP Code:** Request, Response, Success, Failure
-- **Details:** TLS handshake, certificates, warnings, username, etc.
+- **Interesting:** TLS handshake, certificates, warnings, usernames, hashes, etc.
 
 ---
 
@@ -318,27 +338,6 @@ sudo ./eapreach.sh -i eth0
 ```
 
 Compare outputs to understand which methods work and their security posture.
-
----
-
-## Real-World Use Cases
-
-### 🎓 Network Administrators
-- **Deploy 802.1X:** Verify correct certificate, test all client types
-- **Troubleshoot:** "Why is Device X failing to auth?" → See exact EAP failure point
-- **Audit:** Ensure deprecated methods (MD5) are truly disabled
-- **Monitor:** Watch authentication handshakes during security assessments
-
-### 🔒 Security Teams
-- **Penetration Testing:** Detect MITM vulnerabilities (self-signed certs, downgrade attacks)
-- **Compliance:** Prove that only strong EAP methods are in use
-- **Incident Response:** Analyze captured authentications for anomalies
-- **Policy Validation:** Verify certificate pinning, TLS versions, cipher suites
-
-### 👨‍💻 Developers
-- **Client Software:** Debug why your app fails 802.1X auth
-- **Device Firmware:** Verify EAP implementation correctness
-- **Testing:** Create repeatable test scenarios with recorded captures
 
 ---
 
