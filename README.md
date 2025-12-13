@@ -34,13 +34,9 @@ CLIENT (running eapreach)
     ├─ Decodes EAP method, certificate details, TLS handshake
     ├─ Flags security warnings (deprecated, downgrade, self-signed)
     └─ Shows: Success ✓ or Failure ✗
-
-AUTHENTICATOR (AP/Switch) ← Backend RADIUS (not visible to eapreach)
-    ↓
-    └─ Server-side auth (invisible from client perspective)
 ```
 
-**Key point:** eapreach shows what the **client sees**, not backend RADIUS communication.
+eapreach shows what the **client** or **attacker** sees, not backend RADIUS communication.
 
 ---
 
