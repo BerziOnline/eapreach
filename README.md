@@ -106,7 +106,7 @@ Only the unencrypted part is visible: the inner authentication of PEAP/TTLS/FAST
 ![PEAP](records/PEAP_1xFail.gif)
 </details>
 
-The pcaps of these recordings are in `pcaps/`.
+The pcaps of these recordings are in `test-pcaps/`.
 
 ## Disclaimer
 
