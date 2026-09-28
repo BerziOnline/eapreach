@@ -2,417 +2,116 @@
 
 **reach each** & **preach**
 
-**Reach each** EAP packet. Discover configuration reality. **Preach** configuration compliance.
+Reach each EAP packet. Discover configuration reality. Preach configuration compliance.
 
-A client-side **802.1X/EAP packet analyzer** with integrated certificate validation. Understand what really happens during enterprise Ethernet and Wi-Fi authentication.
-
----
-
-## What is eapreach?
-
-`eapreach` is a **tshark-based EAP analyzer** that runs directly on your client device during authentication. Unlike traditional packet sniffing from a separate machine, eapreach shows you the **client perspective** of the entire EAP handshake in real-time.
-
-### Why is this useful?
-
-| Scenario | eapreach helps by... |
-|----------|----------------------|
-| **Troubleshooting 802.1X failures** | Shows where auth breaks (Identity? Certificate? TLS handshake?) |
-| **Testing different EAP methods** | Validate EAP-TLS, EAP-TTLS, PEAP, MD5-Challenges |
-| **Certificate validation** | Automatically detects self-signed certs, issuer chains, expiration dates |
-| **Security auditing** | Identifies deprecated methods (MD5), downgrade attacks (Legacy NAK), MITM risks |
-| **Device testing** | Check if a specific device supports modern EAP methods |
-
----
-
-## Real-World Use Cases
-
-### 🎓 Network Administrators
-- **Deploy 802.1X:** Verify correct certificate, test all client types
-- **Troubleshoot:** Why is Device X failing to auth?
-- **Audit:** Ensure deprecated methods (MD5) are truly disabled
-
-### 🔒 Security Teams
-- **Penetration Testing:** Detect MITM vulnerabilities (self-signed certs, downgrade attacks)
-- **Incident Response:** Analyze captured authentications for anomalies
-- **Policy Validation:** Verify authentication handshakes, used certificates, TLS & cipher suites
-- **Compliance:** Prove that only strong EAP methods are in use
-
-### 👨‍💻 Developers
-- **Client Software:** Debug why your app fails 802.1X auth
-- **Device Firmware:** Verify EAP implementation correctness
-- **Testing:** Create repeatable test scenarios with recorded captures
-
----
-
-## How it works
+eapreach shows the 802.1X/EAP authentication of a client, packet by packet, and flags weak configurations. It is one bash script on top of `tshark` and reads a pcap file or captures live.
 
 ```
-CLIENT (running eapreach)
-    ↓
-    ├─ Initiates 802.1X/EAP authentication
-    ├─ eapreach captures EAPOL/EAP frames in real-time
-    ├─ Decodes EAP method, certificate details, TLS handshake
-    ├─ Flags security warnings (deprecated, downgrade, self-signed)
-    └─ Shows: Success ✓ or Failure ✗
+Frame  | EAPOL      | EAP           | Code     | Interesting
+------ | ---------- | ------------- | -------- | ==================================================
+3      | EAP Packet | Identity      | Response | Identity: anonymous
+4      | EAP Packet | MD5-Challenge | Request  | Server offers MD5-Challenge ⚠ [WEAK-METHOD]
+5      | EAP Packet | Legacy Nak    | Response | Client refused method ⚠ [DOWNGRADE-POSSIBLE]
+10     | EAP Packet | PEAP          | Request  | TLS: Server Hello(2)
+       |            |               |          | TLS: Certificate(11)
+       |            |               |          | ┌ CERTIFICATE (server):
+       |            |               |          |   CN: notebook34 ⚠ [SELF-SIGNED]
+       |            |               |          |   Issuer: notebook34
+       |            |               |          |   Valid: 2025-01-13 20:40:40 (UTC) to 2035-01-11 20:40:40 (UTC)
+       |            |               |          | └
+20     | EAP Packet |               | Failure  | ✗ FAIL
 ```
-
-eapreach shows what the **client** or **attacker** sees, not backend RADIUS communication.
-
----
-
-## Output Examples
-
-### Help
-- This is what the help looks like. Security warnings are explained there.
-> [!TIP]
-> <details>
->    <summary>Screenrecord - <strong>Help</strong> <em>(click for watching)</em></summary>
->
->![Help Output](records/help.gif)
->
-></details>
-
-### Live Capture
-- Sadly there was no live-data while recording for documentation :'-(
-- You can see each new EAP packet incoming, marked by relevant and interesting information.
-- Stopping the capture asks you to keep the captured traffic as full pcap-file (not just EAP traffic!) or not.
-- This could be helpful for troubleshooting issues not just related to EAP, perform offline analysis later on or extract whole certificates out of the bytestream.
-> [!TIP]
-> <details>
->    <summary>Screenrecord - <strong>Live Capture</strong> <em>(click for watching)</em></summary>
->
->![Help Output](records/live_capture%20%28sadly%20no%20live-data%20available%29.gif)
->
-></details>
-
-### Successful MD5 Authentication
-- You can see the sniffed identity of "bob" (what is not an issue).
-- There is a sniffed deprecated MD5-Hash (what is an issue).
-- MD5 is cryptographically broken. This network is vulnerable.
-> [!TIP]
-> <details>
->    <summary>Screenrecord - <strong>MD5 Authentication</strong> <em>(click for watching)</em></summary>
->
->![Help Output](records/MD5_1xSuccess.gif)
->
-></details>
-
-### Failed EAP-TTLS Authentication
-- There are several issues.
-- You can see that there is a downgrade message, MD5 hashes in use and also a self signed certificate for the TLS tunnel.
-- The more certificate information is displayed human readable.
-> [!TIP]
-> <details>
->    <summary>Screenrecord - <strong>EAP-TTLS Authentication</strong> <em>(click for watching)</em></summary>
->
->![Help Output](records/EAP-TTLS_1xFail.gif)
->
-></details>
-
-### Multiple EAP-TTLS Authentications
-- This shows that you can analyze as much as authentications you want to in a row.
-> [!TIP]
-> <details>
->    <summary>Screenrecord - <strong>Multiple Authentications</strong> <em>(click for watching)</em></summary>
->
->![Help Output](records/EAP-TTLS_3xSuccess_1xFail.gif)
->
-></details>
-
-### Failed PEAP Authentication
-- PEAP is also working. You can see the same issues as in the EAP-TTLS tunneling here.
-> [!TIP]
-> <details>
->    <summary>Screenrecord - <strong>PEAP Authentication</strong> <em>(click for watching)</em></summary>
->
->![Help Output](records/PEAP_1xFail.gif)
->
-></details>
-
----
-
-## Security Warnings Explained
-
-> [!WARNING]
-> <details>
->    <summary><strong>[DEPRECATED] - MD5-Challenge</strong> <em>(click for details)</em></summary>
->
->**Why dangerous:**
->- MD5 hash function is cryptographically broken (RFC 6151)
->- Collision attacks make cracking feasible (~hours with modern GPUs)
->- Attackers can craft fake MD5 responses
->- No mutual authentication—server can't verify client legitimacy
->
->**How to exploit:**
->```
->1. Capture MD5 challenge from network (visible in eapreach output)
->2. Perform offline dictionary/rainbow table attack
->3. Forge MD5 response to impersonate user
->4. No detection possible—valid hash = valid credential
->```
->
->**Remediation:**
->```
->→ Disable MD5-Challenge on all RADIUS/NAS servers immediately
->→ Configure only: EAP-TLS, EAP-TTLS, PEAP, EAP-FAST, EAP-TEAP
->→ Force minimum TLS 1.2 for tunnel-based methods
->→ Audit all devices—replace hardware that can't do EAP-TLS
->```
->
-></details>
-
----
-
-> [!WARNING]
-> <details>
->    <summary><strong>[DOWNGRADE] - Legacy NAK Fallback Attack</strong> <em>(click for details)</em></summary>
->
->**Why dangerous:**
->- Legacy NAK forces server to negotiate weaker EAP methods
->- RFC 3748 Section 4.3 explicitly lists this as an attack vector
->- Can be injected by attacker during authentication
->- Enables attacks on deprecated methods (e.g., MD5-Challenge)
->
->**How to exploit:**
->```
->1. Attacker intercepts EAP-Request (e.g., for EAP-TTLS)
->2. Injects Legacy NAK: "Client can't do this method"
->3. Server falls back to MD5-Challenge (much weaker)
->4. Attacker cracks MD5 instead of TLS (drastically easier)
->```
->
->**Remediation:**
->```
->→ REJECT Legacy NAK responses on all NAS/RADIUS servers
->→ Enable only strong EAP types (whitelist model)
->→ Monitor logs for Legacy NAK → indicates old/non-compliant hardware
->→ Identify and replace devices that don't support modern EAP
->→ Consider EAP-TLS enforcement only (zero downgrade risk)
->```
->
-></details>
-
----
-
-> [!WARNING]
-> <details>
->    <summary><strong>[SELF-SIGNED] - Self-Signed Certificate</strong> <em>(click for details)</em></summary>
->
->**Why dangerous:**
->- No Certificate Authority validation (Subject == Issuer)
->- Client has no way to verify server identity authentically
->- Perfect setup for Man-in-the-Middle (MITM) attacks
->- Attacker can present any self-signed cert—client will "accept" it
->
->**How to exploit:**
->```
->1. Attacker sets up rogue AP on same network
->2. Client connects, server (attacker) presents self-signed cert
->3. Client has NO way to verify legitimacy (no CA chain to check)
->4. Attacker acts as transparent proxy: Client ↔ Attacker ↔ Real Server
->5. Attacker decrypts/modifies/captures all EAP traffic
->```
->
->**Remediation:**
->```
->→ Use ONLY certificates from trusted CAs (DigiCert, Let's Encrypt, etc.)
->→ Import CA root cert on all clients (certificate pinning)
->→ Verify cert chain on client side (WPA2-Enterprise policy)
->→ Monitor logs for self-signed certificates
->→ Educate users: REJECT unknown certificate warnings
->```
->
-></details>
-
----
 
 ## Usage
 
-### Installation
-
-#### System Requirements
-
-- **Linux-System with Bash**
-- **Default Unix tools:** grep, sed, head, ip
-- **tshark** (from wireshark-common or wireshark-cli)
-- **sudo** (for live packet capture)
-
-#### No Installation Required
-
-`eapreach` is a single-file Bash script. Just run it directly:
-
-
-### Connection Type
-
-#### LAN (Ethernet) - 802.1X Port
-Your client must be physically connected to a 802.1X-enabled switch port.
-
-#### WLAN (Wi-Fi) - 802.1X
-Your client must be connected to (or attempting to connect to) the 802.1X-protected SSID.
-
-
-### Starting the Analysis
-
-#### Live Mode (Real-Time Capture)
-
-Monitor authentication as it happens:
-
 ```bash
-# Live capture on Ethernet interface
-sudo ./eapreach.sh -i eth0
-
-# Live capture on Wi-Fi interface
-sudo ./eapreach.sh -i wlan0
+./eapreach.sh capture.pcapng    # analyze a pcap/pcapng file
+./eapreach.sh -i eth0           # live capture (as root or as user, sudo is used if needed)
+./eapreach.sh -h                # help and all warnings explained
 ```
 
-Press `Ctrl+C` to stop. You'll be prompted to save the capture file.
+Run it on the 802.1X client while it authenticates (LAN port or WLAN). Switch the client's EAP method one by one and watch what the network answers. After a live capture you can keep the full pcap for later analysis.
 
-#### File Mode (Offline Analysis)
+RADIUS traffic (switch/AP to AAA server) is not visible from the client and therefore not part of eapreach.
 
-Analyze a previously captured PCAP file:
+## Requirements
 
-```bash
-./eapreach.sh capture.pcapng
-./eapreach.sh /path/to/eap_auth.pcapng
-```
+- Linux, bash 4.3+
+- tshark (Debian/Ubuntu: `apt install tshark`)
+- grep, sed, awk, xargs, coreutils, iproute2 (present on any common distribution)
+- Live capture: root or sudo
 
-#### Help
+## Warnings
 
-```bash
-./eapreach.sh -h
-```
+| Warning | Meaning | Fix |
+|---|---|---|
+| `WEAK-METHOD` | MD5-Challenge, OTP, GTC or LEAP. No server authentication, no keys. A captured MD5/LEAP answer can be cracked offline. | Disable these methods on the RADIUS server |
+| `DOWNGRADE-POSSIBLE` | Legacy Nak: the server accepts method negotiation. A client that allows a weaker method gets it, and a Nak can be forged (RFC 3748, 7.8). | Allow only the methods you need |
+| `SELF-SIGNED` | Server certificate signed by itself, typically the untouched default of the RADIUS server or device. Users learn to accept any certificate, including a rogue access point's. | Certificate from your own CA, roll out the CA, enforce validation on the clients |
+| `CERT-EXPIRED` `CERT-NOT-YET-VALID` | Certificate not valid at capture time | Re-issue |
+| `WEAK-SIGNATURE` `WEAK-KEY` | Certificate signed with MD5/SHA-1, or RSA key below 2048 bit | Re-issue |
+| `OLD-TLS-VERSION` `WEAK-CIPHER` | TLS 1.1 or older, or RC4/DES/3DES/NULL/EXPORT/anon cipher | TLS 1.2+ with modern ciphers |
+| `IDENTITY-EXPOSED` | Outer identity is a real username | Anonymous outer identity on the client |
+| `NO-METHOD` | EAP-Success without any authentication method | Check port and RADIUS policy for fail-open or accept-all rules |
 
-Shows complete usage, examples, and detailed security explanations.
+## Tested methods
 
----
+| Method | Status |
+|---|---|
+| MD5-Challenge | ✅ |
+| PEAP | ✅ |
+| EAP-TTLS | ✅ |
+| EAP-TLS (TLS 1.2) | ✅ server and client certificate |
+| EAP-TLS (TLS 1.3) | ✅ certificates are encrypted in TLS 1.3 and cannot be shown |
+| EAP-FAST | ✅ |
+| TEAP | ❔ not tested |
 
-## Understanding the Output Format
+Only the unencrypted part is visible: the inner authentication of PEAP/TTLS/FAST/TEAP runs inside the TLS tunnel. eapreach shows which certificate the server presents, not whether the client checks it.
 
-```
-Frame | EAPOL Type          | EAP Type             | EAP Code             | Interesting
-────────────────────────────────────────────────────────────────────────────────────
-123   | Start               |                      |                      | 
-124   | EAP Packet          | Identity             | Request              | 
-125   | EAP Packet          | Identity             | Response             | Identity: user@example.com
-126   | EAP Packet          | EAP-TLS              | Request              | TLS: Client Hello(1)
-```
+## Screenrecords
 
-**Columns:**
-- **Frame:** Packet number in capture
-- **EAPOL Type:** Start, EAP Packet, Success, Failure, Logoff
-- **EAP Type:** Identity, MD5-Challenge, EAP-TLS, EAP-TTLS, PEAP, etc.
-- **EAP Code:** Request, Response, Success, Failure
-- **Interesting:** TLS handshake, certificates, warnings, usernames, hashes, etc.
+<details>
+<summary>Help</summary>
 
----
+![Help](records/help.gif)
+</details>
 
-## More Examples
+<details>
+<summary>Live capture (no live data during recording)</summary>
 
-### Audit Network Security
+![Live capture](records/live_capture%20%28sadly%20no%20live-data%20available%29.gif)
+</details>
 
-```bash
-# Save a capture
-sudo ./eapreach.sh -i eth0
-# (authenticate, then Ctrl+C)
-# Saves to: eap_capture_20250213_091530.pcapng
+<details>
+<summary>MD5, success</summary>
 
-# Analyze it multiple times
-./eapreach.sh eap_capture_20250213_091530.pcapng
-./eapreach.sh eap_capture_20250213_091530.pcapng | grep DEPRECATED
-./eapreach.sh eap_capture_20250213_091530.pcapng | grep SELF-SIGNED
-```
+![MD5](records/MD5_1xSuccess.gif)
+</details>
 
-### Test Multiple EAP Methods
+<details>
+<summary>EAP-TTLS, failure</summary>
 
-Create different supplicant configs and test each:
+![EAP-TTLS](records/EAP-TTLS_1xFail.gif)
+</details>
 
-```bash
-# Test EAP-TLS
-sudo ./eapreach.sh -i eth0
+<details>
+<summary>EAP-TTLS, 3x success, 1x failure</summary>
 
-# Test EAP-TTLS
-sudo ./eapreach.sh -i eth0
+![EAP-TTLS multiple](records/EAP-TTLS_3xSuccess_1xFail.gif)
+</details>
 
-# Test PEAP
-sudo ./eapreach.sh -i eth0
-```
+<details>
+<summary>PEAP, failure</summary>
 
-Compare outputs to understand which methods work and their security posture.
+![PEAP](records/PEAP_1xFail.gif)
+</details>
 
----
-
-## Troubleshooting
-
-### "Permission denied" error
-
-Live packet capture requires root:
-
-```bash
-# Use sudo
-sudo ./eapreach.sh -i wlan0
-
-# Or analyze a previously saved file (no sudo needed)
-./eapreach.sh capture.pcapng
-```
-
-### "tshark not found"
-
-```bash
-# Ubuntu/Debian
-sudo apt install wireshark-common
-
-# RHEL/CentOS
-sudo yum install wireshark
-
-# Arch
-sudo pacman -S wireshark-cli
-```
-
-### No EAP packets captured
-
-**Possible causes:**
-
-- Interface not connected to 802.1X network
-- Authentication already completed (start capture *before* connecting)
-- Wrong interface name (use `ip link show` to list)
-- Port on switch not configured for 802.1X
-
----
-
-## EAP Methods Supported
-
-| Method | Tunnel | Status |
-|--------|--------|--------|
-| EAP-Identity | No | ✅ Supported |
-| MD5-Challenge | No | ✅ Supported |
-| EAP-TLS | No | ❔ Should work |
-| EAP-TTLS | Yes | ✅ Supported |
-| PEAP | Yes | ✅ Supported |
-| EAP-FAST | Yes | ❔ Should work |
-| EAP-TEAP | Yes | ❔ Should work |
-
----
+The pcaps of these recordings are in `pcaps/`.
 
 ## Disclaimer
 
-**eapreach** is a diagnostic tool for authorized network testing only.
+Capture only on networks you own or are allowed to test.
 
-- Capture packets **only on networks you own or have permission to test**
-- Do not use to intercept unauthorized traffic
-- Respect local laws regarding packet capture and network analysis
-- Use responsibly for legitimate security purposes
+## License
 
----
-
-## References
-
-- **IEEE 802.1X:** Port-Based Network Access Control
-- **RFC 3748:** Extensible Authentication Protocol (EAP)
-- **RFC 5216:** EAP-TLS Authentication Protocol
-- **RFC 5281:** Extensible Authentication Protocol Tunneled Transport Layer Security
-- **RFC 2104:** HMAC: Keyed-Hashing for Message Authentication
-- **RFC 6151:** Updated Security Considerations for MD5 and HMAC-MD5
-
----
-
-**Questions?** Open an issue on GitHub or check the help: `./eapreach.sh -h`
+MIT, see [LICENSE](LICENSE).

@@ -4,8 +4,9 @@
 # Reach each EAP packet. Discover configuration reality. Preach configuration compliance.
 # It's a tshark based EAP packet analyzer with certificate analysis included.
 
-# Copyright® 2025 BerziOnline
-# eapreach v1.0
+# Copyright (c) 2025 BerziOnline
+# SPDX-License-Identifier: MIT
+# eapreach v1.1
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COLOR DEFINITIONS
@@ -23,32 +24,44 @@ YELLOW='\033[33m'
 # TRANSLATION TABLES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# EAPOL Type Translation
+# EAPOL Packet Types (IEEE 802.1X-2020)
 declare -A EAPOL_TYPES=(
     [0]="EAP Packet"
     [1]="Start"
     [2]="Logoff"
-    [3]="Success"
-    [4]="Failure"
+    [3]="Key"
+    [4]="ASF Alert"
+    [5]="MKA"
 )
 
-# EAP Type Translation
+# EAP Method Types (IANA: https://www.iana.org/assignments/eap-numbers)
 declare -A EAP_TYPES=(
     [1]="Identity"
     [2]="Notification"
     [3]="Legacy Nak"
     [4]="MD5-Challenge"
-    [6]="Reserved"
+    [5]="OTP"
+    [6]="GTC"
     [13]="EAP-TLS"
+    [17]="LEAP"
     [21]="EAP-TTLS"
     [25]="PEAP"
-    [26]="PEAP"
-    [29]="EAP-MAKA"
-    [32]="EAP-FAST"
-    [43]="EAP-TEAP"
+    [26]="MS-EAP-Auth"
+    [29]="EAP-MSCHAPv2"
+    [32]="EAP-POTP"
+    [43]="EAP-FAST"
+    [55]="TEAP"
 )
 
-# EAP Code Translation
+# Methods without server authentication and without key derivation
+declare -A EAP_WEAK_TYPES=(
+    [4]=1   # MD5-Challenge
+    [5]=1   # OTP
+    [6]=1   # GTC
+    [17]=1  # LEAP
+)
+
+# EAP Codes (RFC 3748)
 declare -A EAP_CODES=(
     [1]="Request"
     [2]="Response"
@@ -56,56 +69,42 @@ declare -A EAP_CODES=(
     [4]="Failure"
 )
 
-# TLS Handshake Type Translation
+# TLS Handshake Types (IANA TLS HandshakeType)
 declare -A TLS_TYPES=(
     [1]="Client Hello"
     [2]="Server Hello"
+    [4]="New Session Ticket"
     [11]="Certificate"
     [12]="Server Key Exchange"
+    [13]="Certificate Request"
     [14]="Server Hello Done"
+    [15]="Certificate Verify"
     [16]="Client Key Exchange"
-    [20]="Change Cipher Spec"
-    [23]="Application Data"
+    [20]="Finished"
+    [22]="Certificate Status"
 )
+
+WEAK_CIPHER_PATTERN='_RC4_|_DES_|_3DES_|_NULL_|_EXPORT|_anon_'
+WEAK_SIG_PATTERN='^(md2|md5|sha1)WithRSAEncryption$|^ecdsa-with-SHA1$|^dsa-with-sha1$'
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRANSLATION FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 translate_eapol() {
-    local value="$1"
-    if [ -z "$value" ]; then
-        echo ""
-    else
-        echo "${EAPOL_TYPES[$value]:-Unknown($value)}"
-    fi
+    [ -n "$1" ] && echo "${EAPOL_TYPES[$1]:-Unknown($1)}"
 }
 
 translate_eap() {
-    local value="$1"
-    if [ -z "$value" ]; then
-        echo ""
-    else
-        echo "${EAP_TYPES[$value]:-Unknown($value)}"
-    fi
+    [ -n "$1" ] && echo "${EAP_TYPES[$1]:-Unknown($1)}"
 }
 
 translate_code() {
-    local value="$1"
-    if [ -z "$value" ]; then
-        echo ""
-    else
-        echo "${EAP_CODES[$value]:-Unknown($value)}"
-    fi
+    [ -n "$1" ] && echo "${EAP_CODES[$1]:-Unknown($1)}"
 }
 
 translate_tls() {
-    local value="$1"
-    if [ -z "$value" ]; then
-        echo ""
-    else
-        echo "${TLS_TYPES[$value]:-Unknown($value)}"
-    fi
+    [ -n "$1" ] && echo "${TLS_TYPES[$1]:-Unknown($1)}"
 }
 
 # Translate comma-separated TLS values into array
@@ -113,196 +112,226 @@ format_tls_values_array() {
     local values="$1"
     local -n arr=$2 # Reference to output array
 
-    # Split by comma
     IFS=',' read -ra tls_array <<< "$values"
-
     for tls_val in "${tls_array[@]}"; do
-        # Trim whitespace
         tls_val=$(echo "$tls_val" | xargs)
-
-        local tls_name=$(translate_tls "$tls_val")
-        arr+=("TLS: $tls_name($tls_val)")
+        arr+=("TLS: $(translate_tls "$tls_val")($tls_val)")
     done
 }
 
-# Extract certificate information from verbose output
+# Exact match in a comma-separated list ("11" must not match "110")
+list_contains() {
+    local item
+    IFS=',' read -ra items <<< "$1"
+    for item in "${items[@]}"; do
+        [ "$(echo "$item" | xargs)" = "$2" ] && return 0
+    done
+    return 1
+}
+
+# Verbose decode of one frame. In live mode the frame may not be on disk yet.
+frame_verbose() {
+    local out tries=0
+    while [ $tries -lt 10 ]; do
+        out=$(tshark -r "$PCAP_FILE" -Y "frame.number == $1" -V 2>/dev/null)
+        [ -n "$out" ] && break
+        [ "$LIVE_MODE" = "1" ] || break
+        sleep 0.2
+        tries=$((tries + 1))
+    done
+    echo "$out"
+}
+
+# Only the first certificate of the chain (= the sender's own certificate)
+first_cert() {
+    awk '/Certificate Length:/{n++} n==1'
+}
+
+# Output: subject_dn|issuer_dn|not_before|not_after|signature_algorithm
 extract_cert_info() {
-    local verbose_output="$1"
-    
-    # Extrahiere Subject CN
-    local subject=$(echo "$verbose_output" | grep -A 10 "subject: rdnSequence" | grep "uTF8String:" | head -1 | sed 's/.*uTF8String: //')
-    
-    # Extrahiere Issuer CN
-    local issuer=$(echo "$verbose_output" | grep -A 10 "issuer: rdnSequence" | grep "uTF8String:" | head -1 | sed 's/.*uTF8String: //')
-    
-    # Extrahiere notBefore (Valid from)
-    local not_before=$(echo "$verbose_output" | grep -A 1 "notBefore:" | grep "utcTime:" | head -1 | sed 's/.*utcTime: //')
-    
-    # Extrahiere notAfter (Valid until)
-    local not_after=$(echo "$verbose_output" | grep -A 1 "notAfter:" | grep "utcTime:" | head -1 | sed 's/.*utcTime: //')
-    
-    # Rückgabe als pipe-separated string
-    echo "$subject|$issuer|$not_before|$not_after"
+    local cert=$(echo "$1" | first_cert)
+    local issuer=$(echo "$cert" | grep -A1 "issuer: rdnSequence" | grep -m1 "rdnSequence:" | sed 's/.*items* (\(.*\))$/\1/')
+    local subject=$(echo "$cert" | grep -A1 "subject: rdnSequence" | grep -m1 "rdnSequence:" | sed 's/.*items* (\(.*\))$/\1/')
+    local not_before=$(echo "$cert" | grep -A1 "notBefore:" | grep -E "utcTime:|generalizedTime:" | head -1 | sed -E 's/.*(utcTime|generalizedTime): //')
+    local not_after=$(echo "$cert" | grep -A1 "notAfter:" | grep -E "utcTime:|generalizedTime:" | head -1 | sed -E 's/.*(utcTime|generalizedTime): //')
+    local sig_alg=$(echo "$cert" | grep -m1 "algorithmIdentifier (" | sed -n 's/.*algorithmIdentifier (\(.*\))/\1/p')
+    echo "$subject|$issuer|$not_before|$not_after|$sig_alg"
 }
 
-# Check if certificate is self-signed using cached verbose output
-is_self_signed_from_verbose() {
-    local verbose_output="$1"
-    
-    # Extrahiere Subject CN aus verbose output
-    local subject=$(echo "$verbose_output" | grep -A 10 "subject: rdnSequence" | grep "uTF8String:" | head -1 | sed 's/.*uTF8String: //')
-    
-    # Extrahiere Issuer CN aus verbose output
-    local issuer=$(echo "$verbose_output" | grep -A 10 "issuer: rdnSequence" | grep "uTF8String:" | head -1 | sed 's/.*uTF8String: //')
-    
-    if [ -n "$subject" ] && [ -n "$issuer" ] && [ "$subject" = "$issuer" ]; then
-        return 0  # true (selbstsigniert)
+# "id-at-commonName=foo,id-at-organizationName=bar" -> "foo"
+dn_cn() {
+    local cn=$(echo "$1" | grep -o 'id-at-commonName=[^,]*' | head -1 | cut -d= -f2-)
+    echo "${cn:-$1}"
+}
+
+# EXPIRED / NOT_YET_VALID relative to the capture time of the frame
+cert_validity_flag() {
+    local nb na ref=${3%.*}
+    nb=$(date -u -d "${1% (UTC)}" +%s 2>/dev/null)
+    na=$(date -u -d "${2% (UTC)}" +%s 2>/dev/null)
+    [ -z "$ref" ] && ref=$(date -u +%s)
+    if [ -n "$na" ] && [ "$ref" -gt "$na" ]; then
+        echo "EXPIRED"
+    elif [ -n "$nb" ] && [ "$ref" -lt "$nb" ]; then
+        echo "NOT_YET_VALID"
     fi
-    return 1  # false
 }
 
-# Process input and decode information - only NEW frames in live mode
+# ═══════════════════════════════════════════════════════════════════════════════
+# PER-FRAME PROCESSING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TSHARK_FIELDS=(-e frame.number -e eapol.type -e eap.type -e eap.code -e eap.identity
+    -e tls.handshake.type -e tls.handshake.version -e frame.time_epoch
+    -e tls.handshake.extensions.supported_version)
+
 process_eap() {
+    local method_seen=0
+
     # Use pipe separator (|) instead of tab to avoid issues with empty fields
-    while IFS='|' read -r frame_num eapol_type eap_type eap_code eap_identity md5_value tls_handshake; do
-        # Skip header row from tshark
-        if [ "$frame_num" = "frame.number" ]; then
-            continue
-        fi
-
-        # Skip empty lines
-        if [ -z "$frame_num" ]; then
-            continue
-        fi
-
-        # Check if frame was already processed (only in live mode with STATE_FILE set)
-        if [ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ] && grep -q "^$frame_num\$" "$STATE_FILE" 2>/dev/null; then
-            continue
-        fi
-
-        # Mark this frame as processed (only in live mode with STATE_FILE set)
-        if [ -n "$STATE_FILE" ]; then
-            echo "$frame_num" >> "$STATE_FILE" 2>/dev/null
-        fi
+    while IFS='|' read -r frame_num eapol_type eap_type eap_code eap_identity tls_handshake tls_version frame_time tls_supported; do
+        [ -z "$frame_num" ] && continue
 
         local interesting_lines=()
 
-        # Determine what to show in Interesting column
-        if [ -n "$eap_identity" ] && [ "$eap_identity" != "0" ]; then
+        # A real method (anything beyond Identity/Notification/Nak) was requested
+        [ "$eap_code" = "1" ] && [ -n "$eap_type" ] && [ "$eap_type" -ge 4 ] 2>/dev/null && method_seen=1
+
+        if [ -n "$eap_identity" ]; then
             interesting_lines+=("Identity: $eap_identity")
-        elif [ -n "$md5_value" ]; then
-            interesting_lines+=("MD5: $md5_value ${YELLOW}⚠ [DEPRECATED]${RESET}")
-        elif [ -n "$eap_type" ] && [ "$eap_type" = "3" ]; then
-            # Legacy Nak (EAP Type 3) detected
-            interesting_lines+=("Client falling back to weaker method ${YELLOW}⚠ [DOWNGRADE]${RESET}")
+            if [ "$eap_code" = "2" ] && [[ ! "$eap_identity" =~ ^(anonymous|@) ]]; then
+                interesting_lines+=("${YELLOW}⚠ [IDENTITY-EXPOSED]${RESET}")
+            fi
+        elif [ "$eap_type" = "3" ]; then
+            interesting_lines+=("Client refused method ${YELLOW}⚠ [DOWNGRADE-POSSIBLE]${RESET}")
+        elif [ -n "${EAP_WEAK_TYPES[${eap_type:-0}]}" ] && [ "$eap_code" = "1" ]; then
+            interesting_lines+=("Server offers $(translate_eap "$eap_type") ${YELLOW}⚠ [WEAK-METHOD]${RESET}")
+        elif [ -n "${EAP_WEAK_TYPES[${eap_type:-0}]}" ] && [ "$eap_code" = "2" ]; then
+            interesting_lines+=("Client answered $(translate_eap "$eap_type") ${RED}⚠ [WEAK-METHOD]${RESET}")
         elif [ -n "$tls_handshake" ]; then
-            # Format TLS values into array (one per line)
             format_tls_values_array "$tls_handshake" interesting_lines
 
-            # Wenn Certificate(11) dabei ist → Zertifikat anzeigen
-            if [[ "$tls_handshake" == *"11"* ]]; then
-                interesting_lines+=("┌ CERTIFICATE:")
-                
-                # Hole verbose output für diesen Frame
-                if [ -n "$PCAP_FILE" ] && [ -f "$PCAP_FILE" ]; then
-                    local verbose=$(tshark -r "$PCAP_FILE" -Y "frame.number == $frame_num" -V 2>/dev/null)
-                    
-                    # Extrahiere Zertifikatsinformationen
-                    local cert_info=$(extract_cert_info "$verbose")
-                    IFS='|' read -r cert_cn cert_issuer cert_not_before cert_not_after <<< "$cert_info"
-                    
-                    # Prüfe ob selbstsigniert
-                    local self_signed_flag=""
-                    if is_self_signed_from_verbose "$verbose"; then
-                        self_signed_flag=" ${YELLOW}⚠ [SELF-SIGNED - MITM Risk]${RESET}"
-                    fi
-                    
-                    # CN Line
-                    if [ -n "$cert_cn" ]; then
-                        interesting_lines+=("  CN: $cert_cn$self_signed_flag")
-                    fi
-                    
-                    # Issuer Line
-                    if [ -n "$cert_issuer" ]; then
-                        interesting_lines+=("  Issuer: $cert_issuer")
-                    fi
-                    
-                    # Validity Period
-                    if [ -n "$cert_not_before" ] || [ -n "$cert_not_after" ]; then
-                        interesting_lines+=("  Valid: $cert_not_before to $cert_not_after")
+            if list_contains "$tls_handshake" "2" || list_contains "$tls_handshake" "11"; then
+                local verbose=$(frame_verbose "$frame_num")
+
+                if list_contains "$tls_handshake" "2"; then
+                    [ "$tls_supported" = "0x0304" ] && interesting_lines+=("TLS 1.3 - certificate is encrypted")
+                    case "$tls_version" in
+                        0x0300) interesting_lines+=("${YELLOW}⚠ [OLD-TLS-VERSION]${RESET} SSL 3.0") ;;
+                        0x0301) interesting_lines+=("${YELLOW}⚠ [OLD-TLS-VERSION]${RESET} TLS 1.0") ;;
+                        0x0302) interesting_lines+=("${YELLOW}⚠ [OLD-TLS-VERSION]${RESET} TLS 1.1") ;;
+                    esac
+                    local cipher=$(echo "$verbose" | grep -m1 "Cipher Suite: " | sed -n 's/.*Cipher Suite: \([A-Za-z0-9_]*\).*/\1/p')
+                    if [[ "$cipher" =~ $WEAK_CIPHER_PATTERN ]]; then
+                        interesting_lines+=("${YELLOW}⚠ [WEAK-CIPHER]${RESET} $cipher")
                     fi
                 fi
-                
-                interesting_lines+=("└")
+
+                if list_contains "$tls_handshake" "11"; then
+                    local owner="server"
+                    [ "$eap_code" = "2" ] && owner="client"
+                    interesting_lines+=("┌ CERTIFICATE ($owner):")
+
+                    local cert_subject cert_issuer cert_not_before cert_not_after cert_sig
+                    IFS='|' read -r cert_subject cert_issuer cert_not_before cert_not_after cert_sig <<< "$(extract_cert_info "$verbose")"
+
+                    local self_signed_flag=""
+                    if [ -n "$cert_subject" ] && [ "$cert_subject" = "$cert_issuer" ]; then
+                        self_signed_flag=" ${YELLOW}⚠ [SELF-SIGNED]${RESET}"
+                    fi
+                    [ -n "$cert_subject" ] && interesting_lines+=("  CN: $(dn_cn "$cert_subject")$self_signed_flag")
+                    [ -n "$cert_issuer" ] && interesting_lines+=("  Issuer: $(dn_cn "$cert_issuer")")
+
+                    if [ -n "$cert_not_before" ] || [ -n "$cert_not_after" ]; then
+                        local valtext="  Valid: $cert_not_before to $cert_not_after"
+                        case "$(cert_validity_flag "$cert_not_before" "$cert_not_after" "$frame_time")" in
+                            EXPIRED) valtext+=" ${YELLOW}⚠ [CERT-EXPIRED]${RESET}" ;;
+                            NOT_YET_VALID) valtext+=" ${YELLOW}⚠ [CERT-NOT-YET-VALID]${RESET}" ;;
+                        esac
+                        interesting_lines+=("$valtext")
+                    fi
+
+                    if [[ "$cert_sig" =~ $WEAK_SIG_PATTERN ]]; then
+                        interesting_lines+=("  Signature: $cert_sig ${YELLOW}⚠ [WEAK-SIGNATURE]${RESET}")
+                    fi
+
+                    # RSA key size of the first certificate (modulus without leading 00)
+                    local modulus=""
+                    if echo "$verbose" | first_cert | grep -q "modulus:"; then
+                        modulus=$(tshark -r "$PCAP_FILE" -Y "frame.number == $frame_num" -T fields -e pkcs1.modulus 2>/dev/null | cut -d, -f1)
+                        modulus=${modulus#00}
+                    fi
+                    if [ -n "$modulus" ] && [ $(( ${#modulus} * 4 )) -lt 2048 ]; then
+                        interesting_lines+=("  RSA key: $(( ${#modulus} * 4 )) bit ${YELLOW}⚠ [WEAK-KEY]${RESET}")
+                    fi
+
+                    interesting_lines+=("└")
+                fi
             fi
         fi
 
-        # Check for Success/Failure (overwrites everything)
+        # Success/Failure (overwrites everything)
         if [ "$eap_code" = "3" ]; then
-            interesting_lines=("${GREEN}✓ SUCCESS${RESET}")
+            if [ "$method_seen" = "0" ]; then
+                interesting_lines=("${GREEN}✓ SUCCESS${RESET} ${YELLOW}⚠ [NO-METHOD]${RESET}")
+            else
+                interesting_lines=("${GREEN}✓ SUCCESS${RESET}")
+            fi
+            method_seen=0
         elif [ "$eap_code" = "4" ]; then
             interesting_lines=("${RED}✗ FAIL${RESET}")
+            method_seen=0
         fi
 
-        # Translate the values
-        local eapol_name=$(translate_eapol "$eapol_type")
-        local eap_name=$(translate_eap "$eap_type")
-        local code_name=$(translate_code "$eap_code")
-
-        # Print first line with Frame/EAPOL/EAP/Code
         printf "%-6s | %-20s | %-20s | %-20s | %b\n" \
             "$frame_num" \
-            "$eapol_name" \
-            "$eap_name" \
-            "$code_name" \
+            "$(translate_eapol "$eapol_type")" \
+            "$(translate_eap "$eap_type")" \
+            "$(translate_code "$eap_code")" \
             "${interesting_lines[0]}"
 
-        # Print additional lines for extra TLS entries
+        # Additional lines (TLS entries, certificate details)
         for ((i=1; i<${#interesting_lines[@]}; i++)); do
-            printf "%-6s | %-20s | %-20s | %-20s | %b\n" \
-                "" "" "" "" \
-                "${interesting_lines[$i]}"
+            printf "%-6s | %-20s | %-20s | %-20s | %b\n" "" "" "" "" "${interesting_lines[$i]}"
         done
     done
 }
 
-# Cleanup function for temp files
+print_header() {
+    echo -e "${GRAY}$(printf '%-6s | %-20s | %-20s | %-20s | %-80s' "Frame" "EAPOL" "EAP" "Code" "Interesting")${RESET}"
+    echo -e "${GRAY}$(printf '%-6s | %-20s | %-20s | %-20s | %-80s' "------" "--------------------" "--------------------" "--------------------" "$(printf '=%.0s' {1..80})")${RESET}"
+}
+
+# Ask to keep the live capture, then remove the temp file
 cleanup() {
-    # Cleanup state file
-    rm -f "$STATE_FILE" 2>/dev/null
-    
-    # Nur bei Live-Capture fragen, ob PCAP gespeichert werden soll
-    if [ -n "$TEMP_PCAP" ] && [ -f "$TEMP_PCAP" ] && [ "$LIVE_MODE" = "1" ]; then
+    if [ -n "$TEMP_PCAP" ] && [ -f "$TEMP_PCAP" ]; then
         echo ""
         echo -e "${CYAN_BOLD}═════════════════════════════════════════════════════════════════${RESET}"
         echo -e "${CYAN_BOLD}LIVE CAPTURE finished - go out and preach!${RESET}"
         echo -e "${CYAN_BOLD}═════════════════════════════════════════════════════════════════${RESET}"
         echo ""
-        
-        # Frage ob PCAP behalten werden soll
-        read -p "Möchtest du die PCAP-Datei speichern? (j/n): " -n 1 -r response
+
+        read -p "Save the capture as a pcap file? (y/n): " -n 1 -r response
         echo ""
-        
-        if [[ $response =~ ^[Jj]$ ]]; then
-            local timestamp=$(date +%Y%m%d_%H%M%S)
-            local output_file="eap_capture_$timestamp.pcapng"
-            
+
+        if [[ $response =~ ^[Yy]$ ]]; then
+            local output_file="eap_capture_$(date +%Y%m%d_%H%M%S).pcapng"
             cp "$TEMP_PCAP" "$output_file"
-            echo "✓ PCAP gespeichert: $output_file"
+            echo "✓ Saved: $output_file"
         else
-            echo "✓ PCAP gelöscht"
+            echo "✓ Discarded"
         fi
-        
-        rm -f "$TEMP_PCAP" 2>/dev/null
-    elif [ -n "$TEMP_PCAP" ] && [ -f "$TEMP_PCAP" ]; then
-        rm -f "$TEMP_PCAP" 2>/dev/null
+
+        rm -f "$TEMP_PCAP"
     fi
 }
 
-# Set trap to cleanup on exit
 trap cleanup EXIT
 
-# Display usage information
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELP
+# ═══════════════════════════════════════════════════════════════════════════════
+
 usage() {
     echo ""
     echo -e "${GRAY}###########################################################################################${RESET}"
@@ -312,118 +341,69 @@ usage() {
     echo -e "${GRAY}###########################################################################################${RESET}"
     echo ""
     echo -e "${CYAN_BOLD}USAGE:${RESET}"
-    echo "    $0 <pcap_file>              analyze any pcap/pcapng file"
-    echo "    $0 -i <interface>           live capture directly with a network interface"
+    echo "    $0 <pcap_file>              analyze a pcap/pcapng file"
+    echo "    $0 -i <interface>           live capture on a network interface"
     echo "    $0 -h                       display this help"
     echo ""
     echo -e "${CYAN_BOLD}EXAMPLES:${RESET}"
-    echo "    $0 test.pcapng              analyze pre-captured pcap file \"test.pcapng\""
-    echo "    $0 -i enp2s0                live capture on enp2s0"
+    echo "    $0 test.pcapng"
+    echo "    $0 -i enp2s0                (as root or as user - sudo is used if needed)"
     echo ""
     echo -e "${CYAN_BOLD}CLIENT SETUP:${RESET}"
-    echo -e "    ${GRAY}eapreach is running direclty on the 802.1X-CLIENT during the authentication process.${RESET}"
-    echo -e "    ${GRAY}You have to know, that offering 802.1X authentication methods is a client-side-setting.${RESET}"
-    echo -e "    ${GRAY}This is why you want to analyze dot1x environments from client side by this tool here.${RESET}"
+    echo -e "    ${GRAY}Run eapreach on the 802.1X client while it authenticates (LAN or WLAN).${RESET}"
+    echo -e "    ${GRAY}Switch the client's EAP method one by one and watch what the network answers.${RESET}"
+    echo -e "    ${GRAY}RADIUS (authenticator <-> AAA server) is never visible from the client.${RESET}"
     echo ""
-    echo -e "    ${GRAY}LAN (Ethernet):${RESET}"
-    echo -e "    ${GRAY}    • client has to be connected to a \"normal\" configurated 802.1X edge port from the target network${RESET}"
-    echo -e "    ${GRAY}    • the clients network interface need to be setup to use 802.1X${RESET}"
-    echo -e "    ${GRAY}    • the 802.1X settings need to be varied through all the EAP methods you want to check - one by one${RESET}"
-    echo -e "    ${GRAY}    • while doing that, just sniff a pcap or keep the live capture mode running from this tool here${RESET}"
-    echo -e "    ${GRAY}    • pcap can be stored with eapreach while live capturing as well, so this is the recommended method${RESET}"
+    echo -e "${CYAN_BOLD}REQUIREMENTS:${RESET}"
+    echo -e "    ${GRAY}Linux, bash 4.3+, tshark, coreutils (date, tee, mktemp), grep, sed, awk, xargs, ip${RESET}"
+    echo -e "    ${GRAY}Live capture: root or sudo${RESET}"
     echo ""
-    echo -e "    ${GRAY}WLAN (Wi-Fi):${RESET}"
-    echo -e "    ${GRAY}    • not really a difference to the LAN connection${RESET}"
-    echo -e "    ${GRAY}    • client has to be connected to a 802.1X-SSID from the target network${RESET}"
+    echo -e "${CYAN_BOLD}SECURITY WARNINGS:${RESET}"
     echo ""
-    echo -e "    ${GRAY}SOFTWARE REQUIREMENTS:${RESET}"
-    echo -e "    ${GRAY}    ✓ tshark (aus wireshark-common)${RESET}"
-    echo -e "    ${GRAY}    ✓ Bash 4+, grep, sed, head${RESET}"
-    echo -e "    ${GRAY}    ✓ sudo (für Packet Capture)${RESET}"
+    echo -e "    ${YELLOW}⚠ [WEAK-METHOD]${RESET} MD5-Challenge, OTP, GTC or LEAP"
+    echo -e "    ${GRAY}  The server never proves its identity and no keys are derived.${RESET}"
+    echo -e "    ${GRAY}  A captured MD5/LEAP answer can be cracked offline (dictionary attack).${RESET}"
+    echo -e "    ${GRAY}  Offered by the server = misconfiguration. Answered by the client = password at risk.${RESET}"
+    echo -e "    ${GRAY}  → Disable these methods on the RADIUS server.${RESET}"
     echo ""
-    echo -e "    ${GRAY}WHY ARE THERE NO RADIUS-SEGMENTS?${RESET}"
-    echo -e "    ${GRAY}    eapreach displays EAPOL/EAP-traffic (Supplicant↔Authenticator)${RESET}"
-    echo -e "    ${GRAY}    RADIUS is running in the backend and not at the edge (Authenticator↔AAA-Server), so you cannot see them here!${RESET}"
-    echo -e "    ${GRAY}    → You are checking the client perspective from the edge (EAP-methods, certificates, success/failure)${RESET}"
-    echo -e "    ${GRAY}    → The backend communication from authenticator to the AAA server (=RADIUS/TACACS+) is not relevant here${RESET}"
-    echo -e "    ${GRAY}    → You want to analyze different opportunities and weaknesses related to the network access from client perspective${RESET}"
+    echo -e "    ${YELLOW}⚠ [DOWNGRADE-POSSIBLE]${RESET} Legacy Nak"
+    echo -e "    ${GRAY}  The server lets the client negotiate the method (RFC 3748, 7.8).${RESET}"
+    echo -e "    ${GRAY}  A client that allows a weaker method will get it - and a Nak can be forged.${RESET}"
+    echo -e "    ${GRAY}  → Allow only the EAP methods you need on the RADIUS server.${RESET}"
     echo ""
-    echo -e "${CYAN_BOLD}SECURITY WARNINGS EXPLAINED:${RESET}"
+    echo -e "    ${YELLOW}⚠ [SELF-SIGNED]${RESET} Server certificate signed by itself"
+    echo -e "    ${GRAY}  Typically the untouched default certificate of the RADIUS server or device.${RESET}"
+    echo -e "    ${GRAY}  Clients cannot verify it, so users learn to accept any certificate -${RESET}"
+    echo -e "    ${GRAY}  including the one of a rogue access point (evil twin, credential theft).${RESET}"
+    echo -e "    ${GRAY}  → Use a certificate from your own CA, roll out the CA, enforce validation.${RESET}"
     echo ""
-    
-    echo -e "    ${YELLOW}⚠ [DEPRECATED]${RESET} - MD5-Challenge Authentication"
-    echo -e "    ${GRAY}─────────────────────────────────────────────────────────────${RESET}"
-    echo -e "    ${GRAY}WHY DANGEROUS:${RESET}"
-    echo -e "    ${GRAY}      • MD5 hash function is cryptographically broken (RFC 6151)${RESET}"
-    echo -e "    ${GRAY}      • Collision attacks possible, making cracking feasible${RESET}"
-    echo -e "    ${GRAY}      • Attackers can craft fake MD5 responses${RESET}"
-    echo -e "    ${GRAY}      • No mutual authentication - server can't verify client legitimacy${RESET}"
-    echo -e "    ${GRAY}${RESET}"
-    echo -e "    ${GRAY}HOW TO EXPLOIT:${RESET}"
-    echo -e "    ${GRAY}      1. Capture MD5 challenge hashes from network${RESET}"
-    echo -e "    ${GRAY}      2. Perform offline dictionary/rainbow table attacks (~hours/minutes)${RESET}"
-    echo -e "    ${GRAY}      3. Forge MD5 response and gain network access${RESET}"
-    echo -e "    ${GRAY}      4. No detection possible - valid hash = valid credential${RESET}"
-    echo -e "    ${GRAY}${RESET}"
-    echo -e "    ${GRAY}REMEDIATION:${RESET}"
-    echo -e "    ${GRAY}      → Disable MD5-Challenge on RADIUS/NAS servers immediately${RESET}"
-    echo -e "    ${GRAY}      → Configure only: EAP-TLS, EAP-TTLS, PEAP, EAP-FAST${RESET}"
-    echo -e "    ${GRAY}      → Force minimum TLS 1.2 for tunnel-based methods${RESET}"
-    echo -e "    ${GRAY}      → Audit all devices - replace hardware that can't do EAP-TLS${RESET}"
+    echo -e "    ${YELLOW}⚠ [CERT-EXPIRED] [CERT-NOT-YET-VALID] [WEAK-SIGNATURE] [WEAK-KEY]${RESET}"
+    echo -e "    ${GRAY}  Certificate outside its validity at capture time, signed with MD5/SHA-1,${RESET}"
+    echo -e "    ${GRAY}  or RSA key below 2048 bit. → Re-issue the certificate.${RESET}"
     echo ""
-    
-    echo -e "    ${YELLOW}⚠ [DOWNGRADE]${RESET} - Legacy NAK Fallback Attack"
-    echo -e "    ${GRAY}─────────────────────────────────────────────────────────────${RESET}"
-    echo -e "    ${GRAY}WHY DANGEROUS:${RESET}"
-    echo -e "    ${GRAY}      • Legacy NAK forces server to negotiate weaker EAP methods${RESET}"
-    echo -e "    ${GRAY}      • RFC 3748 explicitly lists as attack vector (Ch. 4.3)${RESET}"
-    echo -e "    ${GRAY}      • Can be injected by attacker to force downgrade${RESET}"
-    echo -e "    ${GRAY}      • Enables attacks on deprecated auth methods (MD5, etc.)${RESET}"
-    echo -e "    ${GRAY}${RESET}"
-    echo -e "    ${GRAY}HOW TO EXPLOIT:${RESET}"
-    echo -e "    ${GRAY}      1. Attacker intercepts EAP-Request (e.g., for EAP-TTLS)${RESET}"
-    echo -e "    ${GRAY}      2. Injects Legacy NAK: 'Client can't do this method'${RESET}"
-    echo -e "    ${GRAY}      3. Server falls back to MD5-Challenge (weaker)${RESET}"
-    echo -e "    ${GRAY}      4. Attacker cracks MD5 instead of TLS (much easier)${RESET}"
-    echo -e "    ${GRAY}${RESET}"
-    echo -e "    ${GRAY}REMEDIATION:${RESET}"
-    echo -e "    ${GRAY}      → REJECT Legacy NAK responses on all NAS/RADIUS servers${RESET}"
-    echo -e "    ${GRAY}      → Enable only strong EAP types (whitelist model)${RESET}"
-    echo -e "    ${GRAY}      → Monitor for Legacy NAK in logs → indicates old hardware${RESET}"
-    echo -e "    ${GRAY}      → Identify & replace non-compliant devices${RESET}"
-    echo -e "    ${GRAY}      → Consider EAP-TLS enforcement only (zero downgrade risk)${RESET}"
+    echo -e "    ${YELLOW}⚠ [OLD-TLS-VERSION] [WEAK-CIPHER]${RESET}"
+    echo -e "    ${GRAY}  Server chose TLS 1.1 or older, or an RC4/DES/3DES/NULL/EXPORT/anon cipher.${RESET}"
+    echo -e "    ${GRAY}  → Require TLS 1.2+ with modern ciphers on the RADIUS server.${RESET}"
     echo ""
-    
-    echo -e "    ${YELLOW}⚠ [SELF-SIGNED]${RESET} - Self-Signed Certificate"
-    echo -e "    ${GRAY}─────────────────────────────────────────────────────────────${RESET}"
-    echo -e "    ${GRAY}WHY DANGEROUS:${RESET}"
-    echo -e "    ${GRAY}      • No Certificate Authority validation (Subject == Issuer)${RESET}"
-    echo -e "    ${GRAY}      • Client can't verify server identity authentically${RESET}"
-    echo -e "    ${GRAY}      • Perfect for Man-in-the-Middle (MITM) attacks${RESET}"
-    echo -e "    ${GRAY}      • Attacker can present fake cert - client accepts (no CA check)${RESET}"
-    echo -e "    ${GRAY}${RESET}"
-    echo -e "    ${GRAY}HOW TO EXPLOIT:${RESET}"
-    echo -e "    ${GRAY}      1. Attacker sets up rogue AP on same network${RESET}"
-    echo -e "    ${GRAY}      2. Client connects, server presents self-signed cert${RESET}"
-    echo -e "    ${GRAY}      3. Client has NO way to verify legitimacy (no CA chain)${RESET}"
-    echo -e "    ${GRAY}      4. Attacker acts as proxy: Client↔Attacker↔Real Server${RESET}"
-    echo -e "    ${GRAY}      5. Attacker decrypts/modifies/captures all EAP traffic${RESET}"
-    echo -e "    ${GRAY}${RESET}"
-    echo -e "    ${GRAY}REMEDIATION:${RESET}"
-    echo -e "    ${GRAY}      → Use ONLY certificates from trusted CAs (DigiCert, Let's Encrypt, etc.)${RESET}"
-    echo -e "    ${GRAY}      → Import CA root cert on all clients (certificate pinning)${RESET}"
-    echo -e "    ${GRAY}      → Verify cert chain on client side (WPA2-Enterprise policy)${RESET}"
-    echo -e "    ${GRAY}      → Monitor for self-signed certs in logs${RESET}"
-    echo -e "    ${GRAY}      → Educate users: REJECT unknown certificate warnings${RESET}"
+    echo -e "    ${YELLOW}⚠ [IDENTITY-EXPOSED]${RESET} Outer identity is not anonymous"
+    echo -e "    ${GRAY}  The username is readable by anyone on the wire.${RESET}"
+    echo -e "    ${GRAY}  → Set an anonymous outer identity (e.g. anonymous@example.com) on the client.${RESET}"
+    echo ""
+    echo -e "    ${YELLOW}⚠ [NO-METHOD]${RESET} EAP-Success without authentication method"
+    echo -e "    ${GRAY}  The port was opened without any credential check.${RESET}"
+    echo -e "    ${GRAY}  Possible causes: fail-open / critical-auth rule, accept-all policy.${RESET}"
+    echo -e "    ${GRAY}  → Check the authenticator and RADIUS policy for this port.${RESET}"
     echo ""
 }
 
-# Main script logic
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+
 main() {
     local mode="file"
     local input=""
 
-    # Parse arguments
     if [ $# -eq 0 ]; then
         usage
         exit 1
@@ -447,16 +427,14 @@ main() {
         esac
     done
 
-    # Validate input
     if [ -z "$input" ]; then
-        echo "Fehler: Keine Eingabe angegeben"
+        echo "Error: no input given"
         usage
         exit 1
     fi
 
-    # Check if tshark is available
     if ! command -v tshark &> /dev/null; then
-        echo "Fehler: tshark nicht gefunden. Bitte wireshark-common installieren."
+        echo "Error: tshark not found"
         exit 1
     fi
 
@@ -466,134 +444,52 @@ main() {
     echo -e "${GRAY}Run with -h for ${YELLOW}security warning${GRAY} explanations${RESET}"
     echo ""
 
-    # File mode
     if [ "$mode" = "file" ]; then
         if [ ! -f "$input" ]; then
-            echo "Fehler: Datei '$input' nicht gefunden"
+            echo "Error: file '$input' not found"
             exit 1
         fi
 
-        echo "Datei: $input"
-        echo "Modus: Offline Analyse"
+        echo "File: $input"
+        echo "Mode: Offline analysis"
         echo ""
+        print_header
 
-        # Print header in GRAY
-        echo -e "${GRAY}$(printf '%-6s | %-20s | %-20s | %-20s | %-80s' "Frame" "EAPOL" "EAP" "Code" "Interesting")${RESET}"
-        echo -e "${GRAY}$(printf '%-6s | %-20s | %-20s | %-20s | %-80s' "------" "--------------------" "--------------------" "--------------------" "$(printf '=%.0s' {1..80})")${RESET}"
+        PCAP_FILE="$input"
+        LIVE_MODE="0"
+        tshark -r "$input" -Y "eap or eapol" -T fields -E separator='|' "${TSHARK_FIELDS[@]}" 2>/dev/null | process_eap
 
-        # Set global PCAP_FILE for use in functions
-        export PCAP_FILE="$input"
-        export LIVE_MODE="0"
-        
-        # No state file for file mode (process all frames)
-        STATE_FILE=""
-
-        tshark -r "$input" -Y "eap or eapol" -T fields -E separator='|' \
-            -e frame.number \
-            -e eapol.type \
-            -e eap.type \
-            -e eap.code \
-            -e eap.identity \
-            -e eap.md5.value \
-            -e tls.handshake.type 2>/dev/null | process_eap
-
-        # Print offline analysis completion banner
         echo ""
         echo -e "${CYAN_BOLD}═════════════════════════════════════════════════════════════════${RESET}"
         echo -e "${CYAN_BOLD}OFFLINE ANALYSIS finished - go out and preach!${RESET}"
         echo -e "${CYAN_BOLD}═════════════════════════════════════════════════════════════════${RESET}"
         echo ""
-
-    # Live mode
     else
-        # Check if interface exists
         if ! ip link show "$input" &>/dev/null; then
-            echo "Fehler: Interface '$input' nicht gefunden"
+            echo "Error: interface '$input' not found"
             exit 1
         fi
 
+        local SUDO=""
+        [ "$EUID" -ne 0 ] && SUDO="sudo"
+
         echo "Interface: $input"
-        echo "Modus: Live Capture (Ctrl+C zum Beenden)"
+        echo "Mode: Live capture (Ctrl+C to stop)"
         echo ""
+        print_header
 
-        # Print header in GRAY
-        echo -e "${GRAY}$(printf '%-6s | %-20s | %-20s | %-20s | %-80s' "Frame" "EAPOL" "EAP" "Code" "Interesting")${RESET}"
-        echo -e "${GRAY}$(printf '%-6s | %-20s | %-20s | %-20s | %-80s' "------" "--------------------" "--------------------" "--------------------" "$(printf '=%.0s' {1..80})")${RESET}"
+        # Only the capture itself runs privileged. It streams the packets once:
+        # tee stores them in a user-owned temp file (certificate details, saving),
+        # the second tshark decodes them live. No polling, no duplicate lines.
+        TEMP_PCAP=$(mktemp "${TMPDIR:-/tmp}/eapreach_XXXXXX.pcapng")
+        PCAP_FILE="$TEMP_PCAP"
+        LIVE_MODE="1"
 
-        # Create a temporary file for capturing packets
-        TEMP_PCAP=$(mktemp /tmp/eap_analyzer_XXXXXX.pcapng)
-        STATE_FILE=$(mktemp /tmp/eap_analyzer_state_XXXXXX.txt)
-        
-        export PCAP_FILE="$TEMP_PCAP"
-        export STATE_FILE="$STATE_FILE"
-        export LIVE_MODE="1"
-
-        # Need sudo for live capture
-        if [ "$EUID" -ne 0 ]; then
-            # Start tshark in background to capture to temp file
-            sudo tshark -i "$input" -w "$TEMP_PCAP" 2>/dev/null &
-            local CAPTURE_PID=$!
-            
-            # Sleep a moment to ensure tshark is capturing
-            sleep 0.5
-
-            # Now run the analysis on the temp file in a loop
-            while kill -0 $CAPTURE_PID 2>/dev/null; do
-                tshark -r "$TEMP_PCAP" -Y "eap or eapol" -T fields -E separator='|' \
-                    -e frame.number \
-                    -e eapol.type \
-                    -e eap.type \
-                    -e eap.code \
-                    -e eap.identity \
-                    -e eap.md5.value \
-                    -e tls.handshake.type 2>/dev/null | process_eap
-                
-                sleep 1
-            done
-
-            # Final read after capture stops
-            tshark -r "$TEMP_PCAP" -Y "eap or eapol" -T fields -E separator='|' \
-                -e frame.number \
-                -e eapol.type \
-                -e eap.type \
-                -e eap.code \
-                -e eap.identity \
-                -e eap.md5.value \
-                -e tls.handshake.type 2>/dev/null | process_eap
-        else
-            # Start tshark in background to capture to temp file
-            tshark -i "$input" -w "$TEMP_PCAP" 2>/dev/null &
-            local CAPTURE_PID=$!
-            
-            # Sleep a moment to ensure tshark is capturing
-            sleep 0.5
-
-            # Now run the analysis on the temp file in a loop
-            while kill -0 $CAPTURE_PID 2>/dev/null; do
-                tshark -r "$TEMP_PCAP" -Y "eap or eapol" -T fields -E separator='|' \
-                    -e frame.number \
-                    -e eapol.type \
-                    -e eap.type \
-                    -e eap.code \
-                    -e eap.identity \
-                    -e eap.md5.value \
-                    -e tls.handshake.type 2>/dev/null | process_eap
-                
-                sleep 1
-            done
-
-            # Final read after capture stops
-            tshark -r "$TEMP_PCAP" -Y "eap or eapol" -T fields -E separator='|' \
-                -e frame.number \
-                -e eapol.type \
-                -e eap.type \
-                -e eap.code \
-                -e eap.identity \
-                -e eap.md5.value \
-                -e tls.handshake.type 2>/dev/null | process_eap
-        fi
+        $SUDO tshark -Q -l -i "$input" -w - 2>/dev/null \
+            | tee "$TEMP_PCAP" \
+            | tshark -l -i - -Y "eap or eapol" -T fields -E separator='|' "${TSHARK_FIELDS[@]}" 2>/dev/null \
+            | process_eap
     fi
 }
 
-# Run main function
 main "$@"
